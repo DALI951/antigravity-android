@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Adaptive Icon Background -->
+    <color name="ic_launcher_background">#070708</color>
+
+    <!-- Antigravity Brand Palette -->
+    <color name="antigravity_background">#070708</color>
+    <color name="antigravity_surface">#121316</color>
+    <color name="antigravity_surface_variant">#1A1B20</color>
+    <color name="antigravity_primary">#8B6FFF</color>
+    <color name="antigravity_secondary">#00F0FF</color>
+    <color name="antigravity_accent">#00F0FF</color>
+    <color name="antigravity_text_primary">#FFFFFF</color>
+    <color name="antigravity_text_secondary">#9E9EA7</color>
+    <color name="antigravity_error">#FF5370</color>
+    <color name="antigravity_success">#2ED573</color>
+</resources>
