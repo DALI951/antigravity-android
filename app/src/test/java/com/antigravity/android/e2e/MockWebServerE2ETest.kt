@@ -13,7 +13,10 @@ import com.antigravity.android.data.network.ConnectFrameEnvelope
 import com.antigravity.android.data.network.ConnectionStatus
 import com.antigravity.android.domain.StateDiffReducer
 import com.antigravity.android.model.AgentHierarchyBuilder
-import com.antigravity.android.model.AgentNode
+import com.antigravity.android.data.model.AgentNode
+import com.antigravity.android.data.model.AgentRole
+import com.antigravity.android.data.model.AgentStatus
+import com.antigravity.android.data.model.countActiveAgents
 import com.antigravity.android.model.CircularLogBuffer
 import com.antigravity.android.model.LogEntry
 import com.antigravity.android.updater.ChecksumMismatchException
@@ -120,31 +123,30 @@ class MockWebServerE2ETest {
         val sessionHolder = SessionStateHolder("cascade-android-e2e-001")
         val logBuffer = CircularLogBuffer()
 
-        val rootNode = AgentNode(
-            agentId = "root",
-            role = "Root Orchestrator",
-            typeName = "orchestrator",
-            rootConversationId = "cascade-android-e2e-001",
-            nestingDepth = 1
-        )
         val subagentBackend = AgentNode(
             agentId = "sub-backend",
-            role = "Backend Spec Miner",
-            typeName = "miner",
-            parentConversationId = "root",
-            rootConversationId = "cascade-android-e2e-001",
-            nestingDepth = 2
+            name = "Backend Spec Miner",
+            role = AgentRole.SPEC_MINER,
+            status = AgentStatus.RUNNING,
+            parentAgentId = "root",
+            nestingDepth = 1
         )
         val subagentUpdater = AgentNode(
             agentId = "sub-updater",
-            role = "Updater Spec Miner",
-            typeName = "miner",
-            parentConversationId = "root",
-            rootConversationId = "cascade-android-e2e-001",
-            nestingDepth = 2
+            name = "Updater Spec Miner",
+            role = AgentRole.SPEC_MINER,
+            status = AgentStatus.RUNNING,
+            parentAgentId = "root",
+            nestingDepth = 1
         )
-        rootNode.subagents.add(subagentBackend)
-        rootNode.subagents.add(subagentUpdater)
+        val rootNode = AgentNode(
+            agentId = "root",
+            name = "Root Orchestrator",
+            role = AgentRole.ORCHESTRATOR,
+            status = AgentStatus.RUNNING,
+            nestingDepth = 0,
+            children = listOf(subagentBackend, subagentUpdater)
+        )
         sessionHolder.updateSwarm(listOf(rootNode))
 
         logBuffer.append(LogEntry(level = "INFO", tag = "Orchestrator", message = "Spawned 2 subagents"))

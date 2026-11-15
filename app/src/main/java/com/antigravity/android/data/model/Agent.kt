@@ -54,11 +54,38 @@ data class AgentInstance(
 @Serializable
 data class AgentNode(
     val agentId: String,
-    val name: String,
-    val role: AgentRole,
-    val status: AgentStatus,
+    val name: String = "",
+    val role: AgentRole = AgentRole.WORKER,
+    val status: AgentStatus = AgentStatus.RUNNING,
     val nestingDepth: Int = 0,
     val parentAgentId: String? = null,
     val children: List<AgentNode> = emptyList(),
     val currentTask: String = ""
 )
+
+val AgentNode.isRoot: Boolean
+    get() = parentAgentId == null || nestingDepth == 0
+
+fun AgentNode.findNode(id: String): AgentNode? {
+    if (agentId == id) return this
+    for (child in children) {
+        val found = child.findNode(id)
+        if (found != null) return found
+    }
+    return null
+}
+
+fun AgentNode.countActiveAgents(): Int {
+    var count = if (status == AgentStatus.RUNNING) 1 else 0
+    for (child in children) {
+        count += child.countActiveAgents()
+    }
+    return count
+}
+
+fun AgentNode.cancelAll(): AgentNode {
+    return this.copy(
+        status = AgentStatus.CANCELLED,
+        children = children.map { it.cancelAll() }
+    )
+}

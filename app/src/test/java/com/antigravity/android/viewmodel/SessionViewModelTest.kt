@@ -3,7 +3,10 @@ package com.antigravity.android.viewmodel
 import com.antigravity.android.data.model.CascadeTrajectory
 import com.antigravity.android.data.model.SessionStatus
 import com.antigravity.android.data.model.Step
-import com.antigravity.android.model.AgentNode
+import com.antigravity.android.data.model.AgentNode
+import com.antigravity.android.data.model.AgentRole
+import com.antigravity.android.data.model.AgentStatus
+import com.antigravity.android.data.model.cancelAll
 import com.antigravity.android.model.LogEntry
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -143,17 +146,28 @@ class SessionViewModelTest {
     @Test
     fun testSessionCancellation_haltsSessionAndSwarm() {
         val holder = SessionStateHolder("session-1")
-        val rootAgent = AgentNode(agentId = "root", role = "Lead", typeName = "lead", rootConversationId = "session-1", status = "RUNNING")
-        val workerAgent = AgentNode(agentId = "w1", role = "Worker", typeName = "worker", parentConversationId = "root", rootConversationId = "session-1", status = "RUNNING")
-        rootAgent.subagents.add(workerAgent)
+        val workerAgent = AgentNode(
+            agentId = "w1",
+            name = "Worker",
+            role = AgentRole.WORKER,
+            status = AgentStatus.RUNNING,
+            parentAgentId = "root"
+        )
+        val rootAgent = AgentNode(
+            agentId = "root",
+            name = "Lead",
+            role = AgentRole.ORCHESTRATOR,
+            status = AgentStatus.RUNNING,
+            children = listOf(workerAgent)
+        )
 
         holder.updateSwarm(listOf(rootAgent))
         holder.cancelSession()
 
         assertTrue(holder.state.isCancelled)
         assertEquals(SessionStatus.CANCELLED, holder.state.trajectory.status)
-        assertEquals("CANCELLED", holder.state.swarm[0].status)
-        assertEquals("CANCELLED", holder.state.swarm[0].subagents[0].status)
+        assertEquals(AgentStatus.CANCELLED, holder.state.swarm[0].status)
+        assertEquals(AgentStatus.CANCELLED, holder.state.swarm[0].children[0].status)
     }
 
     // ==========================================

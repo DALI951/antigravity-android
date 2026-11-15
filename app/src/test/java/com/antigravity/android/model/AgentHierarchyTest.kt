@@ -1,81 +1,34 @@
 package com.antigravity.android.model
 
+import com.antigravity.android.data.model.AgentNode
+import com.antigravity.android.data.model.AgentRole
+import com.antigravity.android.data.model.AgentStatus
+import com.antigravity.android.data.model.cancelAll
+import com.antigravity.android.data.model.countActiveAgents
+import com.antigravity.android.data.model.findNode
+import com.antigravity.android.data.model.isRoot
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-data class AgentNode(
-    val agentId: String,
-    val role: String,
-    val typeName: String,
-    val parentConversationId: String? = null,
-    val rootConversationId: String,
-    val nestingDepth: Int = 1,
-    val status: String = "RUNNING",
-    val activeTool: String? = null,
-    val subagents: MutableList<AgentNode> = mutableListOf()
-) {
-    val isRoot: Boolean
-        get() = parentConversationId == null || parentConversationId == rootConversationId
-
-    fun findNode(id: String): AgentNode? {
-        if (agentId == id) return this
-        for (sub in subagents) {
-            val found = sub.findNode(id)
-            if (found != null) return found
-        }
-        return null
-    }
-
-    fun countActiveAgents(): Int {
-        var count = if (status == "RUNNING") 1 else 0
-        for (sub in subagents) {
-            count += sub.countActiveAgents()
-        }
-        return count
-    }
-
-    fun cancelAll(): AgentNode {
-        return this.copy(
-            status = "CANCELLED",
-            subagents = subagents.map { it.cancelAll() }.toMutableList()
-        )
-    }
-}
-
 class AgentHierarchyBuilder {
     companion object {
         fun buildTree(nodes: List<AgentNode>): AgentNode? {
             if (nodes.isEmpty()) return null
-            val nodeMap = nodes.associateBy { it.agentId }
-
-            // Find root: either parent is null or parent == rootConversationId or depth 1
             val root = nodes.firstOrNull { it.isRoot } ?: nodes.first()
 
-            // Link children
-            for (node in nodes) {
-                if (node.agentId != root.agentId && node.parentConversationId != null) {
-                    val parent = nodeMap[node.parentConversationId]
-                    if (parent != null && !hasCycle(node, parent, nodeMap)) {
-                        parent.subagents.add(node)
-                    }
+            fun attachChildren(current: AgentNode, pool: List<AgentNode>, visited: Set<String>): AgentNode {
+                val nextVisited = visited + current.agentId
+                val directChildren = pool.filter { it.parentAgentId == current.agentId && it.agentId !in visited }
+                val attachedChildren = directChildren.map { child ->
+                    attachChildren(child, pool, nextVisited)
                 }
+                return current.copy(children = attachedChildren)
             }
-            return root
-        }
 
-        private fun hasCycle(child: AgentNode, parent: AgentNode, map: Map<String, AgentNode>): Boolean {
-            var curr: AgentNode? = parent
-            val visited = mutableSetOf<String>()
-            while (curr != null) {
-                if (curr.agentId == child.agentId) return true
-                if (!visited.add(curr.agentId)) return true
-                curr = curr.parentConversationId?.let { map[it] }
-            }
-            return false
+            return attachChildren(root, nodes, emptySet())
         }
     }
 }
@@ -90,72 +43,68 @@ class AgentHierarchyTest {
     fun testRootAgentNode_creationAndDepth() {
         val root = AgentNode(
             agentId = "root-100",
-            role = "Root Orchestrator",
-            typeName = "teamwork_lead",
-            parentConversationId = null,
-            rootConversationId = "root-100",
-            nestingDepth = 1,
-            status = "RUNNING"
+            name = "Root Orchestrator",
+            role = AgentRole.ORCHESTRATOR,
+            status = AgentStatus.RUNNING,
+            parentAgentId = null,
+            nestingDepth = 0
         )
 
         assertTrue(root.isRoot)
-        assertEquals(1, root.nestingDepth)
-        assertEquals("Root Orchestrator", root.role)
+        assertEquals(0, root.nestingDepth)
+        assertEquals(AgentRole.ORCHESTRATOR, root.role)
+        assertEquals("Root Orchestrator", root.name)
     }
 
     @Test
     fun testSubagentHierarchy_nestingDepthCalculations() {
-        val root = AgentNode(
-            agentId = "root-100",
-            role = "Project Orchestrator",
-            typeName = "orchestrator",
-            rootConversationId = "root-100",
-            nestingDepth = 1
+        val worker = AgentNode(
+            agentId = "worker-300",
+            name = "Connect-RPC Worker",
+            role = AgentRole.WORKER,
+            status = AgentStatus.RUNNING,
+            parentAgentId = "sub-200",
+            nestingDepth = 2
         )
 
         val subOrch = AgentNode(
             agentId = "sub-200",
-            role = "Backend Sub-Orchestrator",
-            typeName = "sub_orch",
-            parentConversationId = "root-100",
-            rootConversationId = "root-100",
-            nestingDepth = 2
+            name = "Backend Sub-Orchestrator",
+            role = AgentRole.SUB_ORCHESTRATOR,
+            status = AgentStatus.RUNNING,
+            parentAgentId = "root-100",
+            nestingDepth = 1,
+            children = listOf(worker)
         )
 
-        val worker = AgentNode(
-            agentId = "worker-300",
-            role = "Connect-RPC Worker",
-            typeName = "worker",
-            parentConversationId = "sub-200",
-            rootConversationId = "root-100",
-            nestingDepth = 3
+        val root = AgentNode(
+            agentId = "root-100",
+            name = "Project Orchestrator",
+            role = AgentRole.ORCHESTRATOR,
+            status = AgentStatus.RUNNING,
+            nestingDepth = 0,
+            children = listOf(subOrch)
         )
 
-        subOrch.subagents.add(worker)
-        root.subagents.add(subOrch)
-
-        assertEquals(1, root.nestingDepth)
-        assertEquals(2, root.subagents[0].nestingDepth)
-        assertEquals(3, root.subagents[0].subagents[0].nestingDepth)
+        assertEquals(0, root.nestingDepth)
+        assertEquals(1, root.children[0].nestingDepth)
+        assertEquals(2, root.children[0].children[0].nestingDepth)
         assertEquals("worker-300", root.findNode("worker-300")?.agentId)
     }
 
     @Test
     fun testCountActiveAgents_aggregatesAcrossHierarchy() {
+        val worker1 = AgentNode(agentId = "w1", name = "M1", role = AgentRole.WORKER, status = AgentStatus.RUNNING, parentAgentId = "root")
+        val worker2 = AgentNode(agentId = "w2", name = "M2", role = AgentRole.WORKER, status = AgentStatus.COMPLETED, parentAgentId = "root")
+        val worker3 = AgentNode(agentId = "w3", name = "M3", role = AgentRole.WORKER, status = AgentStatus.RUNNING, parentAgentId = "root")
+
         val root = AgentNode(
             agentId = "root",
-            role = "Lead",
-            typeName = "lead",
-            rootConversationId = "root",
-            status = "RUNNING"
+            name = "Lead",
+            role = AgentRole.ORCHESTRATOR,
+            status = AgentStatus.RUNNING,
+            children = listOf(worker1, worker2, worker3)
         )
-        val worker1 = AgentNode(agentId = "w1", role = "M1", typeName = "worker", rootConversationId = "root", status = "RUNNING")
-        val worker2 = AgentNode(agentId = "w2", role = "M2", typeName = "worker", rootConversationId = "root", status = "DONE")
-        val worker3 = AgentNode(agentId = "w3", role = "M3", typeName = "worker", rootConversationId = "root", status = "RUNNING")
-
-        root.subagents.add(worker1)
-        root.subagents.add(worker2)
-        root.subagents.add(worker3)
 
         // 1 root + 2 running workers = 3
         assertEquals(3, root.countActiveAgents())
@@ -163,41 +112,39 @@ class AgentHierarchyTest {
 
     @Test
     fun testCancelAll_recursivelyCancelsTree() {
-        val root = AgentNode(
-            agentId = "root",
-            role = "Lead",
-            typeName = "lead",
-            rootConversationId = "root",
-            status = "RUNNING"
-        )
         val worker = AgentNode(
             agentId = "worker",
-            role = "Worker",
-            typeName = "worker",
-            parentConversationId = "root",
-            rootConversationId = "root",
-            status = "RUNNING"
+            name = "Worker",
+            role = AgentRole.WORKER,
+            status = AgentStatus.RUNNING,
+            parentAgentId = "root"
         )
-        root.subagents.add(worker)
+        val root = AgentNode(
+            agentId = "root",
+            name = "Lead",
+            role = AgentRole.ORCHESTRATOR,
+            status = AgentStatus.RUNNING,
+            children = listOf(worker)
+        )
 
         val cancelledTree = root.cancelAll()
 
-        assertEquals("CANCELLED", cancelledTree.status)
-        assertEquals("CANCELLED", cancelledTree.subagents[0].status)
+        assertEquals(AgentStatus.CANCELLED, cancelledTree.status)
+        assertEquals(AgentStatus.CANCELLED, cancelledTree.children[0].status)
     }
 
     @Test
     fun testBuildTreeFromFlatList() {
         val list = listOf(
-            AgentNode(agentId = "r", role = "Lead", typeName = "lead", rootConversationId = "r", nestingDepth = 1),
-            AgentNode(agentId = "sub1", role = "Sub1", typeName = "sub", parentConversationId = "r", rootConversationId = "r", nestingDepth = 2),
-            AgentNode(agentId = "sub2", role = "Sub2", typeName = "sub", parentConversationId = "r", rootConversationId = "r", nestingDepth = 2)
+            AgentNode(agentId = "r", name = "Lead", role = AgentRole.ORCHESTRATOR, status = AgentStatus.RUNNING, nestingDepth = 0),
+            AgentNode(agentId = "sub1", name = "Sub1", role = AgentRole.SUB_ORCHESTRATOR, status = AgentStatus.RUNNING, parentAgentId = "r", nestingDepth = 1),
+            AgentNode(agentId = "sub2", name = "Sub2", role = AgentRole.SUB_ORCHESTRATOR, status = AgentStatus.RUNNING, parentAgentId = "r", nestingDepth = 1)
         )
 
         val tree = AgentHierarchyBuilder.buildTree(list)
         assertNotNull(tree)
         assertEquals("r", tree?.agentId)
-        assertEquals(2, tree?.subagents?.size)
+        assertEquals(2, tree?.children?.size)
     }
 
     // ==========================================
@@ -211,8 +158,8 @@ class AgentHierarchyTest {
 
     @Test
     fun testCircularParentDetection_preventsInfiniteRecursion() {
-        val nodeA = AgentNode(agentId = "A", role = "A", typeName = "lead", parentConversationId = "B", rootConversationId = "A")
-        val nodeB = AgentNode(agentId = "B", role = "B", typeName = "worker", parentConversationId = "A", rootConversationId = "A")
+        val nodeA = AgentNode(agentId = "A", name = "A", role = AgentRole.ORCHESTRATOR, status = AgentStatus.RUNNING, parentAgentId = "B")
+        val nodeB = AgentNode(agentId = "B", name = "B", role = AgentRole.WORKER, status = AgentStatus.RUNNING, parentAgentId = "A")
 
         // Should not crash with StackOverflowError
         val tree = AgentHierarchyBuilder.buildTree(listOf(nodeA, nodeB))
@@ -221,29 +168,30 @@ class AgentHierarchyTest {
 
     @Test
     fun testDeeplyNestedSwarm_depth15() {
-        var current = AgentNode(agentId = "level-1", role = "Root", typeName = "lead", rootConversationId = "level-1", nestingDepth = 1)
-        val root = current
-        for (i in 2..15) {
-            val child = AgentNode(
-                agentId = "level-$i",
-                role = "Worker $i",
-                typeName = "worker",
-                parentConversationId = current.agentId,
-                rootConversationId = "level-1",
-                nestingDepth = i
+        val nodes = mutableListOf<AgentNode>()
+        nodes.add(AgentNode(agentId = "level-0", name = "Root", role = AgentRole.ORCHESTRATOR, status = AgentStatus.RUNNING, nestingDepth = 0))
+        for (i in 1..14) {
+            nodes.add(
+                AgentNode(
+                    agentId = "level-$i",
+                    name = "Worker $i",
+                    role = AgentRole.WORKER,
+                    status = AgentStatus.RUNNING,
+                    parentAgentId = "level-${i - 1}",
+                    nestingDepth = i
+                )
             )
-            current.subagents.add(child)
-            current = child
         }
-
-        val leaf = root.findNode("level-15")
+        val tree = AgentHierarchyBuilder.buildTree(nodes)
+        assertNotNull(tree)
+        val leaf = tree?.findNode("level-14")
         assertNotNull(leaf)
-        assertEquals(15, leaf?.nestingDepth)
+        assertEquals(14, leaf?.nestingDepth)
     }
 
     @Test
     fun testFindNodeNonExistent_returnsNull() {
-        val root = AgentNode(agentId = "root", role = "Root", typeName = "lead", rootConversationId = "root")
+        val root = AgentNode(agentId = "root", name = "Root", role = AgentRole.ORCHESTRATOR, status = AgentStatus.RUNNING)
         assertNull(root.findNode("ghost-agent"))
     }
 }

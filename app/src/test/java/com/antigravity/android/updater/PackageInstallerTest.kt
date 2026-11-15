@@ -28,6 +28,13 @@ class PackageInstallerSpec {
         const val FLAG_GRANT_READ_URI_PERMISSION = 0x00000001
         const val FLAG_ACTIVITY_NEW_TASK = 0x10000000
 
+        const val ACTION_LAUNCH_INSTALL = "LAUNCH_INSTALL"
+        const val ACTION_ROUTE_SETTINGS = "ROUTE_SETTINGS"
+
+        fun determineInstallAction(canRequestInstalls: Boolean): String {
+            return if (canRequestInstalls) ACTION_LAUNCH_INSTALL else ACTION_ROUTE_SETTINGS
+        }
+
         fun generateFileProviderUri(packageName: String, apkFile: File): String {
             require(apkFile.name.endsWith(".apk")) { "Target file must be an APK: ${apkFile.name}" }
             return "content://$packageName.fileprovider/apk_updates/${apkFile.name}"
@@ -106,21 +113,11 @@ class PackageInstallerTest {
     @Test
     fun testPermissionGateRoutingLogic() {
         // When canRequestPackageInstalls() is false -> routes to settings
-        val hasPermission = false
-        val action = if (hasPermission) {
-            "LAUNCH_INSTALL"
-        } else {
-            "ROUTE_SETTINGS"
-        }
-        assertEquals("ROUTE_SETTINGS", action)
+        val deniedAction = PackageInstallerSpec.determineInstallAction(canRequestInstalls = false)
+        assertEquals(PackageInstallerSpec.ACTION_ROUTE_SETTINGS, deniedAction)
 
         // When permission is granted -> launches installer
-        val permissionGranted = true
-        val grantedAction = if (permissionGranted) {
-            "LAUNCH_INSTALL"
-        } else {
-            "ROUTE_SETTINGS"
-        }
-        assertEquals("LAUNCH_INSTALL", grantedAction)
+        val grantedAction = PackageInstallerSpec.determineInstallAction(canRequestInstalls = true)
+        assertEquals(PackageInstallerSpec.ACTION_LAUNCH_INSTALL, grantedAction)
     }
 }
