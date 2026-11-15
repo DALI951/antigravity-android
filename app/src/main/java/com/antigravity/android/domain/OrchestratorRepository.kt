@@ -45,6 +45,7 @@ interface OrchestratorRepository {
     fun connect()
     fun disconnect()
     fun updateEndpoint(url: String, csrfToken: String)
+    fun stopObservingSession(sessionId: String) {}
 }
 
 class OrchestratorRepositoryImpl(
@@ -117,7 +118,17 @@ class OrchestratorRepositoryImpl(
         }
     }
 
+    override fun stopObservingSession(sessionId: String) {
+        activeStreamJobs.remove(sessionId)?.cancel()
+        activeSwarmJobs.remove(sessionId)?.cancel()
+    }
+
     override fun observeActiveSession(sessionId: String): Flow<SessionDetailState> {
+        // Cancel stream jobs for other inactive sessions to prevent coroutine leaks
+        activeStreamJobs.keys.filter { it != sessionId }.forEach { oldId ->
+            activeStreamJobs.remove(oldId)?.cancel()
+        }
+
         val stateFlow = sessionDetailStates.getOrPut(sessionId) {
             val summary = _sessions.value.find { it.id == sessionId }
             MutableStateFlow(
@@ -129,7 +140,8 @@ class OrchestratorRepositoryImpl(
             )
         }
 
-        if (!activeStreamJobs.containsKey(sessionId)) {
+        val existingJob = activeStreamJobs[sessionId]
+        if (existingJob == null || !existingJob.isActive) {
             val job = scope.launch {
                 // Fetch initial trajectory
                 val initialTrajectoryResult = service.getCascadeTrajectory(sessionId)
@@ -185,6 +197,11 @@ class OrchestratorRepositoryImpl(
     }
 
     override fun observeAgentSwarm(sessionId: String): Flow<List<AgentNode>> {
+        // Cancel swarm stream jobs for other inactive sessions to prevent coroutine leaks
+        activeSwarmJobs.keys.filter { it != sessionId }.forEach { oldId ->
+            activeSwarmJobs.remove(oldId)?.cancel()
+        }
+
         val swarmFlow = swarmStates.getOrPut(sessionId) {
             MutableStateFlow(createDefaultSwarmTree(sessionId))
         }
@@ -193,7 +210,8 @@ class OrchestratorRepositoryImpl(
             ConcurrentHashMap()
         }
 
-        if (!activeSwarmJobs.containsKey(sessionId)) {
+        val existingSwarmJob = activeSwarmJobs[sessionId]
+        if (existingSwarmJob == null || !existingSwarmJob.isActive) {
             val job = scope.launch {
                 service.streamAgentStateUpdates(sessionId)
                     .catch { /* ignore */ }

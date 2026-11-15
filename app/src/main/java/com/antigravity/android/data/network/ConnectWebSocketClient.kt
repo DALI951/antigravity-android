@@ -108,6 +108,12 @@ open class ConnectWebSocketClient(
         reconnectJob?.cancel()
         reconnectJob = null
 
+        // Cleanly cancel existing dangling WebSocket before opening a new one
+        try {
+            webSocket?.cancel()
+        } catch (_: Exception) {}
+        webSocket = null
+
         val wsUrl = endpointUrl
         val requestBuilder = Request.Builder().url(wsUrl)
         if (csrfToken.isNotBlank()) {

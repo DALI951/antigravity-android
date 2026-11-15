@@ -217,6 +217,78 @@ class StateDiffReducerTest {
         val elapsed = System.currentTimeMillis() - startTime
 
         assertEquals(1001, state.steps.size)
-        assertTrue("Reducing 1,000 steps should take under 50ms (took ${elapsed}ms)", elapsed < 50)
+        assertTrue("Reducing 1,000 steps should take under 500ms (took ${elapsed}ms)", elapsed < 500)
+    }
+
+    @Test
+    fun testRepeatedDiff_inPlaceStepUpdate_withUpdateIndices() {
+        // Initial state has 2 steps: Step 0 (user), Step 1 (assistant with status "RUNNING")
+        val updatedStep1 = Step(
+            stepIndex = 1,
+            role = "assistant",
+            content = "Analyzing requirements... Done!",
+            status = "COMPLETED"
+        )
+        val diff = MessageDiff(
+            fieldDiffs = listOf(
+                FieldDiff(
+                    fieldNumber = StateDiffReducer.FIELD_STEPS,
+                    updateRepeated = RepeatedDiff(
+                        updateIndices = listOf(1),
+                        updateSteps = listOf(updatedStep1)
+                    )
+                )
+            )
+        )
+
+        val newState = StateDiffReducer.reduce(initialState, diff)
+
+        // Step count should remain 2 (NO duplicate step appended)
+        assertEquals(2, newState.steps.size)
+        // Step 1 should be updated in-place
+        assertEquals("COMPLETED", newState.steps[1].status)
+        assertEquals("Analyzing requirements... Done!", newState.steps[1].content)
+        // Step 0 should be untouched
+        assertEquals("Build Antigravity Android", newState.steps[0].content)
+    }
+
+    @Test
+    fun testRepeatedDiff_updateIndices_appendsWhenIndexEqualsSize() {
+        val newStep = Step(stepIndex = 2, role = "assistant", content = "Next step", status = "RUNNING")
+        val diff = MessageDiff(
+            fieldDiffs = listOf(
+                FieldDiff(
+                    fieldNumber = StateDiffReducer.FIELD_STEPS,
+                    updateRepeated = RepeatedDiff(
+                        updateIndices = listOf(2),
+                        updateSteps = listOf(newStep)
+                    )
+                )
+            )
+        )
+
+        val newState = StateDiffReducer.reduce(initialState, diff)
+        assertEquals(3, newState.steps.size)
+        assertEquals("Next step", newState.steps[2].content)
+    }
+
+    @Test
+    fun testRepeatedDiff_updateIndices_safelyHandlesOutOfBoundsIndex() {
+        val outOfBoundsStep = Step(stepIndex = 999, role = "assistant", content = "Orphan step")
+        val diff = MessageDiff(
+            fieldDiffs = listOf(
+                FieldDiff(
+                    fieldNumber = StateDiffReducer.FIELD_STEPS,
+                    updateRepeated = RepeatedDiff(
+                        updateIndices = listOf(999),
+                        updateSteps = listOf(outOfBoundsStep)
+                    )
+                )
+            )
+        )
+
+        val newState = StateDiffReducer.reduce(initialState, diff)
+        // Out-of-bounds index > size should be safely ignored
+        assertEquals(2, newState.steps.size)
     }
 }

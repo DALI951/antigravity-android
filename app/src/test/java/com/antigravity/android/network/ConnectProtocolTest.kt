@@ -250,4 +250,67 @@ class ConnectProtocolTest {
         assertFalse(streamMap.containsKey(stream1))
         assertTrue(streamMap.containsKey(stream2))
     }
+
+    // ==========================================
+    // Tier 4: Integer Overflow Vulnerability & Error Extraction
+    // ==========================================
+
+    @Test(expected = IllegalArgumentException::class)
+    fun testUnpackBinaryFrame_integerOverflow_throwsIllegalArgumentException() {
+        // Construct header with length = Int.MAX_VALUE (0x7FFFFFFF)
+        // 5 + 0x7FFFFFFF overflows to negative in signed 32-bit int (-2147483644).
+        // Must throw IllegalArgumentException rather than crashing VM with OutOfMemoryError.
+        val corruptHeader = ByteBuffer.allocate(10).order(ByteOrder.BIG_ENDIAN)
+            .put(0x00.toByte())
+            .putInt(Int.MAX_VALUE)
+            .put(ByteArray(5))
+            .array()
+
+        ConnectFrameBuilder.unpackBinaryFrame(corruptHeader)
+    }
+
+    @Test
+    fun testUnpackBinaryFrames_integerOverflow_handledSafelyWithoutCrash() {
+        val corruptBuffer = ByteBuffer.allocate(10).order(ByteOrder.BIG_ENDIAN)
+            .put(0x00.toByte())
+            .putInt(Int.MAX_VALUE)
+            .put(ByteArray(5))
+            .array()
+
+        val frames = ConnectFrameBuilder.unpackBinaryFrames(corruptBuffer)
+        assertTrue("Corrupted overflow frame should result in empty frames list", frames.isEmpty())
+    }
+
+    @Test
+    fun testExtractEndStreamError_withDetailsRoundTrip() {
+        val detailObj = buildJsonObject {
+            put("@type", "type.googleapis.com/google.rpc.ErrorInfo")
+            put("reason", "API_KEY_INVALID")
+            put("domain", "antigravity.dev")
+        }
+        val serialized = ConnectFrameBuilder.serializeEndStreamError(
+            code = "permission_denied",
+            message = "Authentication rejected",
+            details = listOf(detailObj)
+        )
+
+        val parsed = ConnectFrameBuilder.extractEndStreamError(serialized)
+        assertEquals("permission_denied", parsed.code)
+        assertEquals("Authentication rejected", parsed.message)
+        assertEquals(1, parsed.details.size)
+        assertEquals("API_KEY_INVALID", parsed.details[0]["reason"]?.toString()?.replace("\"", ""))
+
+        // Also verify parseEndStreamError alias
+        val aliasParsed = ConnectFrameBuilder.parseEndStreamError(serialized)
+        assertEquals("permission_denied", aliasParsed.code)
+        assertEquals(1, aliasParsed.details.size)
+    }
+
+    @Test
+    fun testExtractEndStreamError_malformedPayload_returnsUnknownError() {
+        val garbagePayload = "not json".toByteArray(Charsets.UTF_8)
+        val error = ConnectFrameBuilder.extractEndStreamError(garbagePayload)
+        assertEquals("unknown", error.code)
+        assertTrue(error.message.contains("Failed to parse error payload"))
+    }
 }

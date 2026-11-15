@@ -43,9 +43,25 @@ class StateDiffReducer {
                     }
                     FIELD_STEPS -> {
                         fieldDiff.updateRepeated?.let { repDiff ->
-                            // Append new steps
-                            for (newStep in repDiff.updateSteps) {
-                                updatedSteps.add(newStep)
+                            // If updateIndices is provided, replace steps in-place; otherwise append to end
+                            if (repDiff.updateIndices.isNotEmpty()) {
+                                for ((i, idx) in repDiff.updateIndices.withIndex()) {
+                                    if (i in repDiff.updateSteps.indices) {
+                                        val newStep = repDiff.updateSteps[i]
+                                        if (idx in updatedSteps.indices) {
+                                            updatedSteps[idx] = newStep
+                                        } else if (idx == updatedSteps.size) {
+                                            updatedSteps.add(newStep)
+                                        }
+                                    }
+                                }
+                                for (i in repDiff.updateIndices.size until repDiff.updateSteps.size) {
+                                    updatedSteps.add(repDiff.updateSteps[i])
+                                }
+                            } else {
+                                for (newStep in repDiff.updateSteps) {
+                                    updatedSteps.add(newStep)
+                                }
                             }
                             // In-place token streaming appends
                             for ((idx, appendText) in repDiff.tokenAppends) {

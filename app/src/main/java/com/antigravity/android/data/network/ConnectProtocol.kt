@@ -3,6 +3,7 @@ package com.antigravity.android.data.network
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
@@ -152,8 +153,9 @@ class ConnectFrameBuilder {
             val buffer = ByteBuffer.wrap(bytes).order(ByteOrder.BIG_ENDIAN)
             val flag = buffer.get()
             val length = buffer.getInt()
-            require(length >= 0) { "Payload length cannot be negative: $length" }
-            require(bytes.size >= 5 + length) { "Frame truncated: expected ${5 + length} bytes, got ${bytes.size}" }
+            require(length >= 0 && bytes.size - 5 >= length) {
+                "Frame truncated: expected ${5L + length} bytes, got ${bytes.size}"
+            }
             val payload = ByteArray(length)
             buffer.get(payload)
             val isEndStream = (flag.toInt() and FLAG_END_STREAM.toInt()) != 0
@@ -174,7 +176,7 @@ class ConnectFrameBuilder {
             while (offset + 5 <= bytes.size) {
                 val flag = bytes[offset]
                 val length = ByteBuffer.wrap(bytes, offset + 1, 4).order(ByteOrder.BIG_ENDIAN).int
-                if (length < 0 || offset + 5 + length > bytes.size) {
+                if (length < 0 || bytes.size - offset - 5 < length) {
                     break // Incomplete frame at the end of the buffer
                 }
                 val payload = ByteArray(length)
@@ -186,13 +188,37 @@ class ConnectFrameBuilder {
             return frames
         }
 
+        private val defaultErrorJson = Json { ignoreUnknownKeys = true; isLenient = true }
+
+        /**
+         * Extracts ConnectError from end-of-stream trailer payload.
+         */
+        fun extractEndStreamError(payload: ByteArray, json: Json = defaultErrorJson): ConnectError {
+            return try {
+                json.decodeFromString<ConnectError>(payload.decodeToString())
+            } catch (e: Exception) {
+                ConnectError(code = "unknown", message = "Failed to parse error payload: ${e.message}")
+            }
+        }
+
+        fun parseEndStreamError(payload: ByteArray, json: Json = defaultErrorJson): ConnectError =
+            extractEndStreamError(payload, json)
+
         /**
          * Serializes an end-of-stream error trailer payload as JSON.
          */
-        fun serializeEndStreamError(code: String, message: String, json: Json = Json): ByteArray {
+        fun serializeEndStreamError(
+            code: String,
+            message: String,
+            details: List<JsonObject> = emptyList(),
+            json: Json = Json
+        ): ByteArray {
             val errorObj = buildJsonObject {
                 put("code", code)
                 put("message", message)
+                if (details.isNotEmpty()) {
+                    put("details", JsonArray(details))
+                }
             }
             return json.encodeToString(errorObj).toByteArray(Charsets.UTF_8)
         }
