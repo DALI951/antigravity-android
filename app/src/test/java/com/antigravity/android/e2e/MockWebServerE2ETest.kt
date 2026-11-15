@@ -340,7 +340,7 @@ class MockWebServerE2ETest {
 
         // 4. Successful reconnection
         status = ConnectionStatus.Connected("http://127.0.0.1:49784")
-        assertTrue(status is ConnectionStatus.Connected)
+        assertEquals("http://127.0.0.1:49784", (status as ConnectionStatus.Connected).endpoint)
     }
 
     // =========================================================================

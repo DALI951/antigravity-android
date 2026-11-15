@@ -85,7 +85,7 @@ class OrchestratorRepositoryTest {
         val flow = repository.observeActiveSession(cascadeId)
         testScheduler.advanceUntilIdle()
 
-        var currentDetail = flow.first()
+        val currentDetail = flow.filter { !it.isLoading }.first()
         assertNotNull(currentDetail.trajectory)
         assertEquals(1, currentDetail.trajectory?.steps?.size)
         assertEquals("Initial Task", currentDetail.trajectory?.title)

@@ -53,13 +53,11 @@ class ConnectionResilienceTest {
 
         // Socket drops
         status = ConnectionStatus.Reconnecting(attempt = 1, delayMs = backoff.calculateDelay(1))
-        assertTrue(status is ConnectionStatus.Reconnecting)
         assertEquals(1, (status as ConnectionStatus.Reconnecting).attempt)
         assertEquals(500L, (status as ConnectionStatus.Reconnecting).delayMs)
 
         // Reconnect failure
         status = ConnectionStatus.Disconnected("Host unreachable")
-        assertTrue(status is ConnectionStatus.Disconnected)
         assertEquals("Host unreachable", (status as ConnectionStatus.Disconnected).reason)
     }
 
