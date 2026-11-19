@@ -18,6 +18,14 @@ class ScaffoldingTest {
     fun testAntigravityApp_canBeInstantiated() {
         val app = AntigravityApp()
         assertNotNull("AntigravityApp should instantiate cleanly", app)
+        val container = app.getOrCreateContainer()
+        assertNotNull("AppContainer should wire AccountRepository", container.accountRepository)
+        assertNotNull("AppContainer should wire OrchestratorRepository", container.orchestratorRepository)
+        assertNotNull("AppContainer should wire PhoneAgentToolExecutor", container.phoneAgentToolExecutor)
+        assertNotNull("AppContainer should wire AppInstallerManager", container.appInstallerManager)
+        assertNotNull("AppContainer should wire UpdateRepository", container.updateRepository)
+        val viewModel = container.createCinemaViewModel()
+        assertNotNull("AppContainer should wire CinemaViewModel with all dependencies", viewModel)
     }
 
     @Test
@@ -37,6 +45,7 @@ class ScaffoldingTest {
             assertTrue("Manifest must declare INTERNET permission", content.contains("android.permission.INTERNET"))
             assertTrue("Manifest must declare ACCESS_NETWORK_STATE permission", content.contains("android.permission.ACCESS_NETWORK_STATE"))
             assertTrue("Manifest must declare REQUEST_INSTALL_PACKAGES permission", content.contains("android.permission.REQUEST_INSTALL_PACKAGES"))
+            assertTrue("Manifest must declare QUERY_ALL_PACKAGES permission", content.contains("android.permission.QUERY_ALL_PACKAGES"))
             assertTrue("Manifest must declare FileProvider", content.contains("androidx.core.content.FileProvider"))
             assertTrue("Manifest FileProvider must match authority com.antigravity.android.fileprovider", content.contains("com.antigravity.android.fileprovider") || content.contains("\${applicationId}.fileprovider"))
         }

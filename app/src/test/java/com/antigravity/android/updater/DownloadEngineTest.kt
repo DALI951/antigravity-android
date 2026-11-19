@@ -1,10 +1,6 @@
 package com.antigravity.android.updater
 
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.runBlocking
-import okhttp3.OkHttpClient
-import okhttp3.Request
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import okio.Buffer
@@ -15,87 +11,8 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import java.io.File
-import java.io.FileOutputStream
-import java.io.IOException
 import java.security.MessageDigest
 import java.util.UUID
-
-data class DownloadProgress(
-    val bytesRead: Long,
-    val totalBytes: Long,
-    val percentage: Int,
-    val speedBytesPerSec: Long = 0L
-)
-
-class ChecksumMismatchException(val expected: String, val actual: String) :
-    Exception("Checksum mismatch! Expected: $expected, Actual: $actual")
-
-class TestDownloadEngine(private val client: OkHttpClient = OkHttpClient()) {
-
-    fun downloadApkStream(
-        url: String,
-        targetDir: File,
-        expectedSha256: String,
-        versionCode: Int
-    ): Flow<DownloadProgress> = flow {
-        if (!targetDir.exists()) targetDir.mkdirs()
-        val tmpFile = File(targetDir, "update_$versionCode.apk.tmp")
-        val finalApk = File(targetDir, "update_$versionCode.apk")
-
-        if (tmpFile.exists()) tmpFile.delete()
-        if (finalApk.exists()) finalApk.delete()
-
-        val digest = MessageDigest.getInstance("SHA-256")
-        val request = Request.Builder().url(url).build()
-
-        try {
-            client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) throw IOException("Unexpected HTTP response: ${response.code}")
-                val body = response.body ?: throw IOException("Empty response body")
-                val totalBytes = body.contentLength()
-                var bytesRead = 0L
-                val startTime = System.currentTimeMillis()
-
-                body.byteStream().use { input ->
-                    FileOutputStream(tmpFile).use { output ->
-                        val buffer = ByteArray(8192)
-                        var read: Int
-                        while (input.read(buffer).also { read = it } != -1) {
-                            output.write(buffer, 0, read)
-                            digest.update(buffer, 0, read)
-                            bytesRead += read
-
-                            val percent = if (totalBytes > 0) ((bytesRead * 100) / totalBytes).toInt() else 0
-                            val elapsedSec = (System.currentTimeMillis() - startTime) / 1000.0
-                            val speed = if (elapsedSec > 0) (bytesRead / elapsedSec).toLong() else 0L
-
-                            emit(DownloadProgress(bytesRead, totalBytes, percent, speed))
-                        }
-                        output.flush()
-                    }
-                }
-
-                // Verify SHA-256
-                val computedHash = digest.digest().joinToString("") { "%02x".format(it) }
-                if (!computedHash.equals(expectedSha256, ignoreCase = true)) {
-                    // Immediate purge of corrupted temporary file
-                    if (tmpFile.exists()) tmpFile.delete()
-                    throw ChecksumMismatchException(expectedSha256, computedHash)
-                }
-
-                // Atomic rename to final .apk
-                val renamed = tmpFile.renameTo(finalApk)
-                if (!renamed) {
-                    tmpFile.copyTo(finalApk, overwrite = true)
-                    tmpFile.delete()
-                }
-            }
-        } catch (e: Exception) {
-            if (tmpFile.exists()) tmpFile.delete()
-            throw e
-        }
-    }
-}
 
 class DownloadEngineTest {
 
@@ -214,7 +131,6 @@ class DownloadEngineTest {
 
     @Test
     fun testServerDisconnect_cleansUpPartialTmpFile() = runBlocking {
-        // Enqueue truncated stream
         mockServer.enqueue(
             MockResponse()
                 .setResponseCode(200)

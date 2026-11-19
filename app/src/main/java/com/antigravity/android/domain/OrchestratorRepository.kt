@@ -45,6 +45,7 @@ interface OrchestratorRepository {
     fun connect()
     fun disconnect()
     fun updateEndpoint(url: String, csrfToken: String)
+    fun setAuthHeaderProvider(provider: () -> Map<String, String>) {}
     fun stopObservingSession(sessionId: String) {}
 }
 
@@ -94,6 +95,10 @@ class OrchestratorRepositoryImpl(
 
     override fun updateEndpoint(url: String, csrfToken: String) {
         client.updateEndpoint(url, csrfToken)
+    }
+
+    override fun setAuthHeaderProvider(provider: () -> Map<String, String>) {
+        client.setAuthHeaderProvider(provider)
     }
 
     override fun observeSessions(): Flow<List<SessionSummary>> = _sessions.asStateFlow()

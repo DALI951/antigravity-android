@@ -1,16 +1,14 @@
 package com.antigravity.android.updater
 
-import kotlinx.serialization.Serializable
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.booleanOrNull
-import kotlinx.serialization.json.intOrNull
-import kotlinx.serialization.json.jsonArray
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
-import kotlinx.serialization.json.longOrNull
+import com.antigravity.android.agent.ApkDownloadService
+import com.antigravity.android.agent.AppInstallerManager
+import com.antigravity.android.agent.DefaultPackageInstallerBridge
+import com.antigravity.android.agent.InstallOutcome
+import kotlinx.coroutines.runBlocking
+import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
+import okio.Buffer
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -18,119 +16,33 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import java.io.File
 import java.net.HttpURLConnection
-
-@Serializable
-data class UpdateManifest(
-    val versionCode: Int,
-    val versionName: String,
-    val minSupportedVersionCode: Int = 0,
-    val releaseDate: String? = null,
-    val releaseNotes: String = "",
-    val apkUrl: String,
-    val fileSizeBytes: Long = 0L,
-    val sha256: String,
-    val isCritical: Boolean = false
-)
-
-sealed class UpdateCheckResult {
-    data class AvailableForDownload(val manifest: UpdateManifest) : UpdateCheckResult()
-    data class Idle(val message: String) : UpdateCheckResult()
-    data class Error(val message: String, val statusCode: Int? = null) : UpdateCheckResult()
-}
-
-data class SemVer(val major: Int, val minor: Int, val patch: Int) : Comparable<SemVer> {
-    companion object {
-        fun parse(version: String): SemVer {
-            val cleaned = version.trim().removePrefix("v").removePrefix("V")
-            val parts = cleaned.split(".").mapNotNull { it.takeWhile { c -> c.isDigit() }.toIntOrNull() }
-            val maj = parts.getOrElse(0) { 0 }
-            val min = parts.getOrElse(1) { 0 }
-            val pat = parts.getOrElse(2) { 0 }
-            return SemVer(maj, min, pat)
-        }
-    }
-
-    override fun compareTo(other: SemVer): Int {
-        if (major != other.major) return major.compareTo(other.major)
-        if (minor != other.minor) return minor.compareTo(other.minor)
-        return patch.compareTo(other.patch)
-    }
-
-    override fun toString(): String = "$major.$minor.$patch"
-}
-
-class UpdateParser {
-    companion object {
-        private val json = Json { ignoreUnknownKeys = true }
-
-        fun parseNativeManifest(jsonString: String): UpdateManifest {
-            return json.decodeFromString<UpdateManifest>(jsonString)
-        }
-
-        fun parseGitHubRelease(jsonString: String): UpdateManifest {
-            val root = json.parseToJsonElement(jsonString).jsonObject
-            val tagName = root["tag_name"]?.jsonPrimitive?.content ?: "v0.0.0"
-            val body = root["body"]?.jsonPrimitive?.content ?: ""
-            val assets = root["assets"]?.jsonArray ?: error("No assets found in GitHub release")
-
-            val apkAsset = assets.map { it.jsonObject }.firstOrNull {
-                val name = it["name"]?.jsonPrimitive?.content ?: ""
-                name.endsWith(".apk")
-            } ?: error("No APK asset found in release")
-
-            val apkUrl = apkAsset["browser_download_url"]?.jsonPrimitive?.content ?: ""
-            val size = apkAsset["size"]?.jsonPrimitive?.longOrNull ?: 0L
-
-            val semVer = SemVer.parse(tagName)
-            val versionCode = semVer.major * 100000 + semVer.minor * 1000 + semVer.patch
-
-            return UpdateManifest(
-                versionCode = versionCode,
-                versionName = tagName.removePrefix("v"),
-                apkUrl = apkUrl,
-                fileSizeBytes = size,
-                sha256 = "", // Extracted from release body or separate asset
-                releaseNotes = body
-            )
-        }
-
-        fun evaluate(localVersionCode: Int, localVersionName: String, manifest: UpdateManifest): UpdateCheckResult {
-            // Check mandatory minimum version
-            val isMandatory = localVersionCode < manifest.minSupportedVersionCode
-            val finalManifest = if (isMandatory) manifest.copy(isCritical = true) else manifest
-
-            // Check if remote is newer by versionCode
-            if (manifest.versionCode > localVersionCode) {
-                return UpdateCheckResult.AvailableForDownload(finalManifest)
-            }
-
-            // Fallback: compare SemVer
-            val localSemVer = SemVer.parse(localVersionName)
-            val remoteSemVer = SemVer.parse(manifest.versionName)
-            if (remoteSemVer > localSemVer) {
-                return UpdateCheckResult.AvailableForDownload(finalManifest)
-            }
-
-            // Up to date or downgrade prevention
-            return UpdateCheckResult.Idle("Application is up to date (version $localVersionName)")
-        }
-    }
-}
+import java.security.MessageDigest
+import java.util.UUID
 
 class UpdateCheckerTest {
 
     private lateinit var mockServer: MockWebServer
+    private lateinit var tempDir: File
 
     @Before
     fun setUp() {
         mockServer = MockWebServer()
         mockServer.start()
+        tempDir = File(System.getProperty("java.io.tmpdir"), "updater_test_" + UUID.randomUUID())
+        tempDir.mkdirs()
     }
 
     @After
     fun tearDown() {
         mockServer.shutdown()
+        tempDir.deleteRecursively()
+    }
+
+    private fun sha256Hex(data: ByteArray): String {
+        val md = MessageDigest.getInstance("SHA-256")
+        return md.digest(data).joinToString("") { "%02x".format(it) }
     }
 
     // ==========================================
@@ -264,7 +176,7 @@ class UpdateCheckerTest {
         val manifest = UpdateManifest(
             versionCode = 203201,
             versionName = "2.32.1",
-            minSupportedVersionCode = 150000, // higher than local 100000
+            minSupportedVersionCode = 150000,
             apkUrl = "https://example.com/critical.apk",
             sha256 = "dummy",
             isCritical = false
@@ -304,7 +216,7 @@ class UpdateCheckerTest {
         mockServer.enqueue(MockResponse().setResponseCode(HttpURLConnection.HTTP_OK).setBody(manifestJson))
 
         val url = mockServer.url("/manifest.json")
-        val client = okhttp3.OkHttpClient()
+        val client = OkHttpClient()
         val request = okhttp3.Request.Builder().url(url).build()
 
         client.newCall(request).execute().use { response ->
@@ -319,12 +231,95 @@ class UpdateCheckerTest {
         mockServer.enqueue(MockResponse().setResponseCode(HttpURLConnection.HTTP_INTERNAL_ERROR).setBody("Server Error"))
 
         val url = mockServer.url("/manifest.json")
-        val client = okhttp3.OkHttpClient()
+        val client = OkHttpClient()
         val request = okhttp3.Request.Builder().url(url).build()
 
         client.newCall(request).execute().use { response ->
             assertEquals(500, response.code)
             assertFalse(response.isSuccessful)
         }
+    }
+
+    // ==========================================
+    // Tier 3: Live UpdateChecker & UpdateRepository Integration
+    // ==========================================
+
+    @Test
+    fun testUpdateChecker_checksGitHubReleasesEndpointAndExtractsSha256() = runBlocking {
+        val sampleSha = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        val githubPayload = """
+            {
+              "tag_name": "v2.40.0",
+              "name": "Antigravity Android 2.40.0",
+              "body": "### What's New\n- Direct App Installer\nSHA-256: $sampleSha",
+              "assets": [
+                {
+                  "name": "antigravity-v2.40.0.apk",
+                  "size": 15240000,
+                  "browser_download_url": "${mockServer.url("/releases/antigravity-v2.40.0.apk")}"
+                }
+              ]
+            }
+        """.trimIndent()
+        mockServer.enqueue(MockResponse().setResponseCode(200).setBody(githubPayload))
+
+        val checker = UpdateChecker(
+            client = OkHttpClient(),
+            customEndpointUrl = mockServer.url("/repos/DALI951/antigravity-android/releases/latest").toString()
+        )
+        val result = checker.checkForUpdates(localVersionCode = 1, localVersionName = "1.0.0")
+
+        assertTrue(result is UpdateCheckResult.AvailableForDownload)
+        val manifest = (result as UpdateCheckResult.AvailableForDownload).manifest
+        assertEquals("2.40.0", manifest.versionName)
+        assertEquals(240000, manifest.versionCode)
+        assertEquals(sampleSha, manifest.sha256)
+    }
+
+    @Test
+    fun testUpdateRepository_endToEndCheckDownloadVerifyAndInstall() = runBlocking {
+        val apkBytes = "Antigravity Self-Update APK Binary v3.0.0".toByteArray(Charsets.UTF_8)
+        val expectedSha = sha256Hex(apkBytes)
+        val apkDownloadUrl = mockServer.url("/downloads/antigravity-v3.0.0.apk").toString()
+
+        val githubReleaseJson = """
+            {
+              "tag_name": "v3.0.0",
+              "body": "Antigravity 3.0.0 Release\nsha256: $expectedSha",
+              "assets": [
+                {
+                  "name": "antigravity-v3.0.0.apk",
+                  "size": ${apkBytes.size},
+                  "browser_download_url": "$apkDownloadUrl"
+                }
+              ]
+            }
+        """.trimIndent()
+
+        mockServer.enqueue(MockResponse().setResponseCode(200).setBody(githubReleaseJson))
+        mockServer.enqueue(MockResponse().setResponseCode(200).setBody(Buffer().write(apkBytes)))
+
+        val bridge = DefaultPackageInstallerBridge(installPermissionGranted = true)
+        val installer = AppInstallerManager(
+            downloadService = ApkDownloadService(defaultTargetDir = tempDir),
+            installerBridge = bridge
+        )
+        val checker = UpdateChecker(
+            customEndpointUrl = mockServer.url("/repos/DALI951/antigravity-android/releases/latest").toString()
+        )
+        val repository = UpdateRepository(
+            updateChecker = checker,
+            appInstallerManager = installer,
+            currentVersionCode = 1,
+            currentVersionName = "1.0.0"
+        )
+
+        val outcome = repository.checkAndAutoUpdate().getOrThrow()
+        assertNotNull("Must return an InstallOutcome when update is available", outcome)
+        assertTrue(outcome is InstallOutcome.CommittedSession)
+        val committed = outcome as InstallOutcome.CommittedSession
+        assertEquals(expectedSha, committed.sha256)
+        assertTrue(committed.apkFile.exists())
+        assertTrue(repository.updateStatus.value is UpdateStatus.InstalledOrLaunched)
     }
 }

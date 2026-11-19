@@ -85,6 +85,13 @@ open class ConnectWebSocketClient(
 
     private var heartbeatJob: Job? = null
     private var reconnectJob: Job? = null
+    private var authHeaderProvider: () -> Map<String, String> = { emptyMap() }
+
+    fun setAuthHeaderProvider(provider: () -> Map<String, String>) {
+        authHeaderProvider = provider
+    }
+
+    fun getAuthHeaders(): Map<String, String> = authHeaderProvider()
 
     fun updateEndpoint(url: String, token: String) {
         endpointUrl = if (url.startsWith("http://")) {
@@ -116,6 +123,12 @@ open class ConnectWebSocketClient(
 
         val wsUrl = endpointUrl
         val requestBuilder = Request.Builder().url(wsUrl)
+        val dynamicHeaders = authHeaderProvider()
+        dynamicHeaders.forEach { (key, value) ->
+            if (value.isNotBlank()) {
+                requestBuilder.header(key, value)
+            }
+        }
         if (csrfToken.isNotBlank()) {
             requestBuilder.header(ConnectFrameBuilder.HEADER_CSRF, csrfToken)
         }
